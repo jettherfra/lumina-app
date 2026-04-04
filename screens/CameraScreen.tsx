@@ -4,21 +4,58 @@ import {
   ActivityIndicator, Image, SafeAreaView
 } from 'react-native'
 import { CameraView, useCameraPermissions } from 'expo-camera'
+import * as ImageManipulator from 'expo-image-manipulator'
 
 interface Props {
   onClose: () => void
   onPhotoTaken: (uri: string) => void
 }
 
+type LightStatus = 'ok' | 'too_dark' | 'too_bright' | null
+
+async function checkLighting(uri: string): Promise<LightStatus> {
+  try {
+    // Skaler ned bildet for rask analyse
+    const small = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 100 } }],
+      { base64: true, format: ImageManipulator.SaveFormat.JPEG }
+    )
+
+    if (!small.base64) return 'ok'
+
+    // Decode base64 og beregn gjennomsnittlig lysstyrke
+    const binary = atob(small.base64)
+    let totalBrightness = 0
+    let pixelCount = 0
+
+    for (let i = 0; i < binary.length - 2; i += 3) {
+      const r = binary.charCodeAt(i)
+      const g = binary.charCodeAt(i + 1)
+      const b = binary.charCodeAt(i + 2)
+      // Luminance-formel
+      totalBrightness += 0.299 * r + 0.587 * g + 0.114 * b
+      pixelCount++
+    }
+
+    const avgBrightness = totalBrightness / pixelCount
+
+    if (avgBrightness < 60) return 'too_dark'
+    if (avgBrightness > 210) return 'too_bright'
+    return 'ok'
+  } catch {
+    return 'ok' // Ikke blokker hvis sjekken feiler
+  }
+}
+
 export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
   const [permission, requestPermission] = useCameraPermissions()
   const [photo, setPhoto] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [lightStatus, setLightStatus] = useState<LightStatus>(null)
   const cameraRef = useRef<CameraView>(null)
 
-  if (!permission) {
-    return <View style={styles.container} />
-  }
+  if (!permission) return <View style={styles.container} />
 
   if (!permission.granted) {
     return (
@@ -39,9 +76,14 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
   async function takePicture() {
     if (!cameraRef.current) return
     setLoading(true)
+    setLightStatus(null)
     try {
       const result = await cameraRef.current.takePictureAsync({ quality: 0.8 })
-      if (result) setPhoto(result.uri)
+      if (result) {
+        const light = await checkLighting(result.uri)
+        setLightStatus(light)
+        setPhoto(result.uri)
+      }
     } catch (e) {
       console.error('Kunne ikke ta bilde', e)
     }
@@ -49,17 +91,64 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
   }
 
   if (photo) {
+    const isLightingBad = lightStatus === 'too_dark' || lightStatus === 'too_bright'
+
     return (
       <View style={styles.container}>
         <Image source={{ uri: photo }} style={styles.preview} />
+
+        {/* Lysvarsel */}
+        {isLightingBad && (
+          <View style={[
+            styles.lightWarning,
+            lightStatus === 'too_dark' ? styles.lightWarningDark : styles.lightWarningBright
+          ]}>
+            <Text style={styles.lightWarningIcon}>
+              {lightStatus === 'too_dark' ? '🌙' : '☀️'}
+            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.lightWarningTitle}>
+                {lightStatus === 'too_dark' ? 'For mørkt' : 'For lyst'}
+              </Text>
+              <Text style={styles.lightWarningText}>
+                {lightStatus === 'too_dark'
+                  ? 'Gå til et lysere sted eller skru på lyset for best resultat.'
+                  : 'Unngå direkte sollys eller sterkt baklys for best resultat.'}
+              </Text>
+            </View>
+          </View>
+        )}
+
         <SafeAreaView style={styles.previewControls}>
-          <Text style={styles.previewTitle}>Ser bildet bra ut?</Text>
-          <TouchableOpacity style={styles.button} onPress={() => onPhotoTaken(photo)}>
-            <Text style={styles.buttonText}>Bruk dette bildet</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.textButton} onPress={() => setPhoto(null)}>
-            <Text style={styles.textButtonText}>Ta på nytt</Text>
-          </TouchableOpacity>
+          <Text style={styles.previewTitle}>
+            {isLightingBad ? 'Dårlig belysning oppdaget' : 'Ser bildet bra ut?'}
+          </Text>
+
+          {isLightingBad ? (
+            <>
+              <TouchableOpacity style={styles.button} onPress={() => {
+                setPhoto(null)
+                setLightStatus(null)
+              }}>
+                <Text style={styles.buttonText}>Ta nytt bilde</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.textButton} onPress={() => onPhotoTaken(photo)}>
+                <Text style={styles.textButtonText}>Bruk allikevel</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity style={styles.button} onPress={() => onPhotoTaken(photo)}>
+                <Text style={styles.buttonText}>Bruk dette bildet ✓</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.textButton} onPress={() => {
+                setPhoto(null)
+                setLightStatus(null)
+              }}>
+                <Text style={styles.textButtonText}>Ta på nytt</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </SafeAreaView>
       </View>
     )
@@ -72,7 +161,7 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
         <View style={styles.overlay}>
           <View style={styles.faceGuide} />
           <Text style={styles.guideText}>
-            Plasser ansiktet ditt i rammen. God belysning gir best resultat.
+            Plasser ansiktet ditt i rammen.{'\n'}God belysning gir best resultat.
           </Text>
         </View>
       </View>
@@ -81,7 +170,6 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
         <TouchableOpacity style={styles.textButton} onPress={onClose}>
           <Text style={styles.textButtonWhite}>Avbryt</Text>
         </TouchableOpacity>
-
         <TouchableOpacity
           style={styles.shutterButton}
           onPress={takePicture}
@@ -92,7 +180,6 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
             : <View style={styles.shutterInner} />
           }
         </TouchableOpacity>
-
         <View style={{ width: 60 }} />
       </SafeAreaView>
     </View>
@@ -112,10 +199,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    top: 0, left: 0, right: 0, bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -178,6 +262,36 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
     letterSpacing: -0.3,
+  },
+  lightWarning: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+  },
+  lightWarningDark: {
+    backgroundColor: 'rgba(0,0,0,0.85)',
+  },
+  lightWarningBright: {
+    backgroundColor: 'rgba(255,200,0,0.85)',
+  },
+  lightWarningIcon: {
+    fontSize: 28,
+  },
+  lightWarningTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  lightWarningText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    lineHeight: 16,
   },
   button: {
     backgroundColor: '#fff',
