@@ -41,6 +41,18 @@ export default function AnalysisResultScreen({ result, onClose }: Props) {
           </Text>
         </View>
 
+        {result.face_detected === false && (
+          <View style={styles.warningCard}>
+            <Text style={styles.warningIcon}>⚠️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.warningTitle}>Ansikt ikke funnet</Text>
+              <Text style={styles.warningText}>
+                Vi kunne ikke finne ansiktet tydelig i bildet. For best resultat: god belysning, ansiktet sentrert og hold telefonen 20–30 cm unna.
+              </Text>
+            </View>
+          </View>
+        )}
+
         <View style={styles.scoreCard}>
           <Text style={styles.scoreCardLabel}>OVERORDNET HUDSKÅR</Text>
           <View style={styles.scoreCardRow}>
@@ -100,6 +112,31 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 4,
     textTransform: 'capitalize',
+  },
+  warningCard: {
+    backgroundColor: '#FFF8E7',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#FFE0A0',
+  },
+  warningIcon: {
+    fontSize: 20,
+  },
+  warningTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 4,
+  },
+  warningText: {
+    fontSize: 12,
+    color: '#666',
+    lineHeight: 18,
   },
   scoreCard: {
     backgroundColor: '#1a1a1a',

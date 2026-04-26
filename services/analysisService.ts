@@ -14,6 +14,7 @@ export interface AnalysisResult {
   metrics: Record<string, ZoneMetrics>
   ai_summary: string
   analysis_id?: string
+  face_detected?: boolean
 }
 
 export async function analyzePhoto(imageUri: string, userId?: string): Promise<AnalysisResult> {
