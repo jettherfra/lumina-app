@@ -185,7 +185,7 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
   }
 
   const distanceMsg = getDistanceMessage()
-  const canTakePhoto = distanceStatus === 'ok'
+  const canTakePhoto = true
 
   return (
     <View style={styles.container}>
@@ -233,7 +233,7 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
         <TouchableOpacity
           style={[styles.shutterButton, !canTakePhoto && styles.shutterButtonDisabled]}
           onPress={takePicture}
-          disabled={loading || !canTakePhoto}
+          disabled={loading}
         >
           {loading
             ? <ActivityIndicator color="black" />
