@@ -111,7 +111,19 @@ export default function HomeScreen({ userName, streak = 0 }: { userName: string,
       setResult(analysisResult)
       setAnalysisCount(prev => prev + 1)
     } catch (e: any) {
-      Alert.alert('Feil', e.message || 'Kunne ikke analysere bildet')
+      if (e.message === 'NO_FACE') {
+        Alert.alert(
+          'Ansikt ikke funnet',
+          'Vi fant ikke ansiktet ditt i bildet. Prøv igjen med bedre belysning og hold telefonen 20–30 cm fra ansiktet.',
+          [{ text: 'Prøv igjen', style: 'default' }]
+        )
+      } else {
+        Alert.alert(
+          'Noe gikk galt',
+          'Kunne ikke analysere bildet. Sjekk internettilkoblingen og prøv igjen.',
+          [{ text: 'OK', style: 'default' }]
+        )
+      }
     }
     setAnalyzing(false)
   }

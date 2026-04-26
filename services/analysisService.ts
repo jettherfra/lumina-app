@@ -36,8 +36,10 @@ export async function analyzePhoto(imageUri: string, userId?: string): Promise<A
   })
 
   if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`Analyse feilet: ${error}`)
+    if (response.status === 422) {
+      throw new Error('NO_FACE')
+    }
+    throw new Error('ANALYSIS_FAILED')
   }
 
   return response.json()
