@@ -1,10 +1,11 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet,
   ActivityIndicator, Image, SafeAreaView
 } from 'react-native'
-import { CameraView, useCameraPermissions } from 'expo-camera'
+import { CameraView, useCameraPermissions, FaceDetectionResult } from 'expo-camera'
 import * as ImageManipulator from 'expo-image-manipulator'
+import * as Brightness from 'expo-brightness'
 
 interface Props {
   onClose: () => void
@@ -12,39 +13,29 @@ interface Props {
 }
 
 type LightStatus = 'ok' | 'too_dark' | 'too_bright' | null
+type DistanceStatus = 'ok' | 'too_far' | 'too_close' | 'no_face' | null
 
 async function checkLighting(uri: string): Promise<LightStatus> {
   try {
-    // Skaler ned bildet for rask analyse
     const small = await ImageManipulator.manipulateAsync(
       uri,
-      [{ resize: { width: 100 } }],
-      { base64: true, format: ImageManipulator.SaveFormat.JPEG }
+      [{ resize: { width: 50, height: 50 } }],
+      { base64: true, format: ImageManipulator.SaveFormat.JPEG, compress: 0.1 }
     )
-
     if (!small.base64) return 'ok'
-
-    // Decode base64 og beregn gjennomsnittlig lysstyrke
-    const binary = atob(small.base64)
-    let totalBrightness = 0
-    let pixelCount = 0
-
-    for (let i = 0; i < binary.length - 2; i += 3) {
-      const r = binary.charCodeAt(i)
-      const g = binary.charCodeAt(i + 1)
-      const b = binary.charCodeAt(i + 2)
-      // Luminance-formel
-      totalBrightness += 0.299 * r + 0.587 * g + 0.114 * b
-      pixelCount++
+    const base64 = small.base64
+    let sum = 0
+    let count = 0
+    for (let i = 0; i < base64.length; i++) {
+      sum += base64.charCodeAt(i)
+      count++
     }
-
-    const avgBrightness = totalBrightness / pixelCount
-
-    if (avgBrightness < 60) return 'too_dark'
-    if (avgBrightness > 210) return 'too_bright'
+    const avg = sum / count
+    if (avg < 80) return 'too_dark'
+    if (avg > 115) return 'too_bright'
     return 'ok'
   } catch {
-    return 'ok' // Ikke blokker hvis sjekken feiler
+    return 'ok'
   }
 }
 
@@ -53,7 +44,28 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
   const [photo, setPhoto] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [lightStatus, setLightStatus] = useState<LightStatus>(null)
+  const [distanceStatus, setDistanceStatus] = useState<DistanceStatus>('no_face')
   const cameraRef = useRef<CameraView>(null)
+  const originalBrightness = useRef<number>(1)
+
+  // Skru opp skjermlysstyrke når kamera åpnes
+  useEffect(() => {
+    async function setBrightness() {
+      try {
+        const { status } = await Brightness.requestPermissionsAsync()
+        if (status === 'granted') {
+          originalBrightness.current = await Brightness.getBrightnessAsync()
+          await Brightness.setBrightnessAsync(1)
+        }
+      } catch (e) {
+        console.log('Brightness not available', e)
+      }
+    }
+    setBrightness()
+    return () => {
+      Brightness.setBrightnessAsync(originalBrightness.current).catch(() => {})
+    }
+  }, [])
 
   if (!permission) return <View style={styles.container} />
 
@@ -73,12 +85,35 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
     )
   }
 
+  function handleFacesDetected({ faces }: FaceDetectionResult) {
+    if (!faces || faces.length === 0) {
+      setDistanceStatus('no_face')
+      return
+    }
+    const face = faces[0]
+    const faceWidth = face.bounds.size.width
+    // Juster disse verdiene etter testing
+    if (faceWidth < 150) setDistanceStatus('too_far')
+    else if (faceWidth > 280) setDistanceStatus('too_close')
+    else setDistanceStatus('ok')
+  }
+
+  function getDistanceMessage() {
+    switch (distanceStatus) {
+      case 'no_face': return { text: 'Plasser ansiktet i rammen', color: 'rgba(255,255,255,0.7)' }
+      case 'too_far': return { text: '📱 Hold telefonen nærmere', color: '#FFD60A' }
+      case 'too_close': return { text: '↔️ Hold telefonen litt lenger unna', color: '#FFD60A' }
+      case 'ok': return { text: '✓ Perfekt avstand', color: '#34C759' }
+      default: return { text: 'Plasser ansiktet i rammen', color: 'rgba(255,255,255,0.7)' }
+    }
+  }
+
   async function takePicture() {
     if (!cameraRef.current) return
     setLoading(true)
     setLightStatus(null)
     try {
-      const result = await cameraRef.current.takePictureAsync({ quality: 0.8 })
+      const result = await cameraRef.current.takePictureAsync({ quality: 0.9 })
       if (result) {
         const light = await checkLighting(result.uri)
         setLightStatus(light)
@@ -92,12 +127,9 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
 
   if (photo) {
     const isLightingBad = lightStatus === 'too_dark' || lightStatus === 'too_bright'
-
     return (
       <View style={styles.container}>
         <Image source={{ uri: photo }} style={styles.preview} />
-
-        {/* Lysvarsel */}
         {isLightingBad && (
           <View style={[
             styles.lightWarning,
@@ -112,18 +144,16 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
               </Text>
               <Text style={styles.lightWarningText}>
                 {lightStatus === 'too_dark'
-                  ? 'Gå til et lysere sted eller skru på lyset for best resultat.'
-                  : 'Unngå direkte sollys eller sterkt baklys for best resultat.'}
+                  ? 'Skjermen lyser opp automatisk — prøv igjen.'
+                  : 'Unngå direkte sollys eller sterkt baklys.'}
               </Text>
             </View>
           </View>
         )}
-
         <SafeAreaView style={styles.previewControls}>
           <Text style={styles.previewTitle}>
             {isLightingBad ? 'Dårlig belysning oppdaget' : 'Ser bildet bra ut?'}
           </Text>
-
           {isLightingBad ? (
             <>
               <TouchableOpacity style={styles.button} onPress={() => {
@@ -154,14 +184,44 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
     )
   }
 
+  const distanceMsg = getDistanceMessage()
+  const canTakePhoto = distanceStatus === 'ok'
+
   return (
     <View style={styles.container}>
       <View style={{ flex: 1, width: '100%' }}>
-        <CameraView style={styles.camera} facing="front" ref={cameraRef} />
+        <CameraView
+          style={styles.camera}
+          facing="front"
+          ref={cameraRef}
+          onFacesDetected={handleFacesDetected}
+          faceDetectorSettings={{
+            mode: 'fast',
+            detectLandmarks: 'none',
+            runClassifications: 'none',
+            minDetectionInterval: 200,
+            tracking: true,
+          }}
+        />
         <View style={styles.overlay}>
-          <View style={styles.faceGuide} />
+          {/* Avstandsindikator øverst */}
+          <View style={styles.distanceBadge}>
+            <Text style={[styles.distanceText, { color: distanceMsg.color }]}>
+              {distanceMsg.text}
+            </Text>
+          </View>
+
+          {/* Ansiktsramme — farge basert på status */}
+          <View style={[
+            styles.faceGuide,
+            distanceStatus === 'ok' && styles.faceGuideOk,
+            distanceStatus === 'too_far' && styles.faceGuideWarn,
+            distanceStatus === 'too_close' && styles.faceGuideWarn,
+          ]} />
+
           <Text style={styles.guideText}>
-            Plasser ansiktet ditt i rammen.{'\n'}God belysning gir best resultat.
+            Hold telefonen 20–30 cm fra ansiktet{'\n'}
+            Skjermen lyser opp for bedre analyse
           </Text>
         </View>
       </View>
@@ -171,9 +231,9 @@ export default function CameraScreen({ onClose, onPhotoTaken }: Props) {
           <Text style={styles.textButtonWhite}>Avbryt</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.shutterButton}
+          style={[styles.shutterButton, !canTakePhoto && styles.shutterButtonDisabled]}
           onPress={takePicture}
-          disabled={loading}
+          disabled={loading || !canTakePhoto}
         >
           {loading
             ? <ActivityIndicator color="black" />
@@ -203,20 +263,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  distanceBadge: {
+    position: 'absolute',
+    top: 60,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  distanceText: {
+    fontSize: 14,
+    fontWeight: '500',
+    letterSpacing: 0.3,
+  },
   faceGuide: {
-    width: 240,
-    height: 300,
-    borderRadius: 120,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.6)',
+    width: 260,
+    height: 320,
+    borderRadius: 130,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
     borderStyle: 'dashed',
   },
+  faceGuideOk: {
+    borderColor: '#34C759',
+    borderStyle: 'solid',
+  },
+  faceGuideWarn: {
+    borderColor: '#FFD60A',
+    borderStyle: 'solid',
+  },
   guideText: {
-    color: 'rgba(255,255,255,0.8)',
+    color: 'rgba(255,255,255,0.7)',
     textAlign: 'center',
     marginTop: 24,
     paddingHorizontal: 48,
-    fontSize: 13,
+    fontSize: 12,
     letterSpacing: 0.3,
     lineHeight: 20,
   },
@@ -236,6 +317,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  shutterButtonDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
   },
   shutterInner: {
     width: 60,
@@ -265,9 +349,7 @@ const styles = StyleSheet.create({
   },
   lightWarning: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
+    top: 0, left: 0, right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -279,9 +361,7 @@ const styles = StyleSheet.create({
   lightWarningBright: {
     backgroundColor: 'rgba(255,200,0,0.85)',
   },
-  lightWarningIcon: {
-    fontSize: 28,
-  },
+  lightWarningIcon: { fontSize: 28 },
   lightWarningTitle: {
     color: '#fff',
     fontSize: 14,
